@@ -12,7 +12,7 @@ __repo__ = ""
 
 class LooseCows:
 
-    def __init__(self, splash, A_btn, B_btn, Up_btn, Dwn_btn, L_btn, R_btn):
+    def __init__(self, splash, A_btn, B_btn, Up_btn, Dwn_btn, L_btn, R_btn, HighScore):
         self._splash = splash
         self._A = A_btn
         self._B = B_btn
@@ -20,6 +20,7 @@ class LooseCows:
         self._D = Dwn_btn
         self._L = L_btn
         self._R = R_btn
+        self._HighScore = HighScore
         self._exit = False
         self._pause = False
         self._menu_bitmap = displayio.Bitmap(120,120,1)
@@ -83,11 +84,11 @@ class LooseCows:
         for x in range(1,14):
             background[x,0] = 1
             background[x,14] = 7
-            
+
         for y in range(1,14):
             background[0,y] = 3
             background[14,y] = 5
-            
+
         for x in range(1,14):
             for y in range(1,14):
                 background[x,y] = 4
@@ -103,7 +104,7 @@ class LooseCows:
         x_rand = random.randint(20,220)
         y_rand = random.randint(20,220)
 
-        cow_sprite = displayio.TileGrid(self.farmer, pixel_shader=self.palette, 
+        cow_sprite = displayio.TileGrid(self.farmer, pixel_shader=self.palette,
                                     width = 1,
                                     height = 1,
                                     tile_width = 16,
@@ -121,15 +122,20 @@ class LooseCows:
         t2 = str(points)
         tg3 = displayio.Group(scale=2, x=20, y=30)
         t3 = str(timeleft)
+        tg4 = displayio.Group(scale=2, x=50, y=30)
+        hs = "HS: " + str(self._HighScore)
         text_area = label.Label(terminalio.FONT, text=text, color=0x000000)
         t2_area = label.Label(terminalio.FONT, text=t2, color=0x000000)
         t3_area = label.Label(terminalio.FONT, text=t3, color=0x000000)
+        t4_area = label.Label(terminalio.FONT, text=hs, color=0x000000)
         text_group.append(text_area)  # Subgroup for text scaling
         tg2.append(t2_area)
         tg3.append(t3_area)
+        tg4.append(t4_area)
         self._splash.append(text_group)
         self._splash.append(tg2)
         self._splash.append(tg3)
+        self._splash.append(tg4)
 
         previous_monotonic = time.monotonic()
 
@@ -137,25 +143,25 @@ class LooseCows:
             if self._pause == False:
                 if self._U.value == 0:
                     sprite[0] = 0
-                    if sprite.y == 10:
+                    if sprite.y <= 10:
                         sprite.y = 220
                     else:
                         sprite.y = sprite.y - 4
                 if self._D.value == 0:
                     sprite[0] = 0
-                    if sprite.y == 220:
+                    if sprite.y >= 220:
                         sprite.y = 10
                     else:
                         sprite.y = sprite.y + 4
                 if self._R.value == 0:
                     sprite[0] = 2
-                    if sprite.x == 220:
+                    if sprite.x >= 220:
                         sprite.x = 10
                     else:
                         sprite.x = sprite.x + 4
                 if self._L.value == 0:
                     sprite[0] = 1
-                    if sprite.x == 10:
+                    if sprite.x <= 10:
                         sprite.x = 220
                     else:
                         sprite.x = sprite.x - 4
@@ -170,16 +176,21 @@ class LooseCows:
                     if points < 10:
                         timeleft = 10
                     elif points < 25:
-                        timeleft = 7
+                        timeleft = 8
                     elif points < 35:
-                        timeleft = 5
+                        timeleft = 6
                     elif points < 50:
-                        timeleft = 3
+                        timeleft = 4
+                    else:
+                        timeleft = 4
                     t2_area.text = str(points)
                     t3_area.text = str(timeleft)
                 time.sleep(0.05)
                 if (time.monotonic() - previous_monotonic) >= 1:
                     if timeleft == 0:
+                        if points > self._HighScore:
+                            self._HighScore = points
+                            t4_area.text = "HS: "+str(self._HighScore)
                         timeleft = 10
                         points = 0
                         sprite.x = 110
@@ -213,4 +224,4 @@ class LooseCows:
                         self.ToggleMenu()
                         self._exit = True
         self.TearDownGame()
-        return True
+        return [True,self._HighScore]
