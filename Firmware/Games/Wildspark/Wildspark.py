@@ -547,9 +547,11 @@ class Wildspark:
             for stage, name in enumerate(names):
                 known = bool(self._caught & (1 << (family * 3 + stage)))
                 items.append(name if known else '??? / ' + kind + ' form ' + str(stage + 1))
-                details.append(kind + (' / BONDED' if known else ' / UNDISCOVERED'))
+                habitat = family % 3 + 1
+                details.append(('CAUGHT / ' if known else 'SEARCH / ') + 'TRAIL %d OR %d' % (habitat, habitat + 3))
                 portraits.append((family, stage, known))
-        while not self._exit and self._choose('FIELD GUIDE / 27 FORMS', items, details, portraits) >= 0:
+        count = sum(1 for i in range(27) if self._caught & (1 << i))
+        while not self._exit and self._choose('FIELD GUIDE / %d/27' % count, items, details, portraits) >= 0:
             pass
 
     def _pause(self, battle=False):
@@ -557,7 +559,7 @@ class Wildspark:
         choice = self._choose('WILDSPARK / EMBLEMS %d' % self._badges, items)
         if battle:
             if choice == 1:
-                self._notice('BATTLE NOTES', 'Guard against the charged burst.')
+                self._notice('CATCHING CREATURES', 'Weaken, then Catch at half HP. No items.')
             elif choice == 2:
                 self._battle_result = 'RETREAT'
             elif choice == 3:
@@ -617,7 +619,7 @@ class Wildspark:
         self._foe_hp = self._foe_max
         self._focus, self._turn = 1, 0
         self._gym, self._final, self._battle_result = gym, final, None
-        self._battle_note = 'Choose a move. B retreats.'
+        self._battle_note = 'Weaken then Catch. B retreats.' if not (gym or final) else 'Guard against the charged burst.'
         self._background(_battle_art(), _world_palette(self._route))
         self._splash.append(_solid(240, 80, INK[0], y=160))
         ally = self._portrait(self._family, self._party[self._family][0], 34, 80)
@@ -635,7 +637,7 @@ class Wildspark:
             bars.append(b)
         self._view['bars'] = bars
         self._view['focus'] = _text(self._splash, '', 111, 151, INK[6])
-        self._view['commands'] = [_text(self._splash, '', 8 + (i % 2) * 120, 176 + (i // 2) * 17) for i in range(6)]
+        self._view['commands'] = [_text(self._splash, '', 8 + (i % 2) * 120, 167 + (i // 2) * 16) for i in range(8)]
         self._view['note'] = _text(self._splash, '', 5, 231, INK[10])
         self._sync_battle(0)
 
@@ -648,7 +650,7 @@ class Wildspark:
         for b, value, maximum in ((self._view['bars'][0], self._foe_hp, self._foe_max), (self._view['bars'][1], mon[1], _maximum(mon[0]))):
             b.fill(0)
             _rect(b, 0, 0, max(0, int(90 * value / maximum)), 5, 1)
-        names = ('Strike +focus', 'Burst -2', 'Guard +focus', 'Bond', 'Tonic (%d)' % self._potions, 'Switch')
+        names = ('Strike +focus', 'Burst -2', 'Guard +focus', 'Catch READY' if self._foe_hp <= self._foe_max // 2 and not (self._gym or self._final) else 'Catch', 'Tonic (%d)' % self._potions, 'Switch', 'Weaken', 'Flee')
         for i, value in enumerate(names):
             _set(self._view['commands'][i], ('>' if i == choice else ' ') + value)
             self._view['commands'][i].color = INK[6] if i == choice else INK[12]
@@ -727,10 +729,10 @@ class Wildspark:
             self._battle_note = 'Guard raised.'
         elif action == 3:
             if self._gym or self._final:
-                self._battle_note = 'Challenge partners cannot be bonded.'
+                self._battle_note = 'Challenge partners cannot be caught.'
                 return
             if self._foe_hp > self._foe_max // 2:
-                self._battle_note = 'Weaken to half HP, then Bond.'
+                self._battle_note = 'Use Weaken, then Catch at half HP.'
                 return
             f = self._foe_family
             if self._party[f] is None:
@@ -739,6 +741,14 @@ class Wildspark:
             self._tamed += 1
             self._battle_result = 'BONDED'
             self._audio.play('collect')
+            return
+        elif action == 6:
+            self._foe_hp = max(1, self._foe_hp - (4 + mon[0]))
+            self._focus = min(3, self._focus + 1)
+            self._battle_note = 'Safe hit! Catch at half HP.'
+            self._audio.play('strike')
+        elif action == 7:
+            self._battle_result = 'RETREAT'
             return
         elif action == 4:
             if self._potions == 0:
@@ -770,7 +780,7 @@ class Wildspark:
             if now - last > 0.18:
                 delta = -2 if not self._U.value else 2 if not self._D.value else -1 if not self._L.value else 1 if not self._R.value else 0
                 if delta:
-                    choice = (choice + delta) % 6
+                    choice = (choice + delta) % 8
                     last = now
                     self._sync_battle(choice)
             if now - last_anim > 0.4:
@@ -810,7 +820,7 @@ class Wildspark:
         if not self._exit:
             if won:
                 evolved = self._award_xp()
-                title = 'EVOLUTION! ' + self._name() if evolved else ('PARTNER BONDED!' if self._battle_result == 'BONDED' else 'VICTORY!')
+                title = 'EVOLUTION! ' + self._name() if evolved else ('CREATURE CAUGHT!' if self._battle_result == 'BONDED' else 'VICTORY!')
                 self._notice(title, 'Partner experience increased.')
             elif self._battle_result == 'DEFEAT':
                 self._rest()
@@ -909,13 +919,21 @@ class Wildspark:
             _place(self._view['partner'], x, y)
             self._view['partner_key'] = key
 
+    def _wild_target(self):
+        # Nine searches on late trails expose all three families and forms.
+        cycle = self._steps // 6
+        band = (self._route - 1) % 3
+        family = ((cycle + self._route) % 3) * 3 + band
+        stage = (cycle // 3) % (3 if self._route >= 4 else 2)
+        level = (2 + min(1, self._route // 3),
+                 4 + min(3, self._route // 2), 8 + max(0, self._route - 4))[stage]
+        return family, level
+
     def _encounter(self):
         if self._party[self._family][1] == 0:
             self._notice('PARTNER NEEDS REST', 'Visit the clinic or switch partners.')
             return False
-        band = (self._route - 1) % 3
-        family = ((self._steps // 6 + self._route) % 3) * 3 + band
-        level = min(12, 2 + self._route + (self._steps // 12) % 2)
+        family, level = self._wild_target()
         self._battle(family, level)
         return True
 

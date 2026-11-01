@@ -33,7 +33,7 @@ class BeaconTests(unittest.TestCase):
         return e
 
     def test_every_loadout_and_contract_selectable(self):
-        for row, field, count in ((0, '_mission', 5), (1, '_weapon', 3), (2, '_support', 3)):
+        for row, field, count in ((0, '_mission', len(M.MISSIONS)), (1, '_weapon', len(M.WEAPONS)), (2, '_support', len(M.SUPPORTS))):
             seen = set()
             for _ in range(count):
                 self.g._change_loadout(row, 1)
@@ -318,6 +318,69 @@ class BeaconTests(unittest.TestCase):
             self.assertTrue(g._ship())
         build.assert_not_called()
         self.assertEqual(tuple(g._splash), scene)
+
+
+    def test_new_weapons_and_pool_reservation(self):
+        for weapon,pellets in ((3,1),(4,5)):
+            self.g._weapon=weapon;self.g._start_mission()
+            self.g._fire()
+            self.assertEqual(sum(s[0] for s in self.g._shots),pellets)
+            self.assertEqual(self.g._mag,M.WEAPONS[weapon][1]-1)
+        self.g._shot_clock=0
+        for s in self.g._shots:s[0]=True
+        for s in self.g._shots[:4]:s[0]=False
+        mag=self.g._mag
+        self.g._fire()
+        self.assertEqual(self.g._mag,mag)
+
+    def test_shield_blocks_damage_then_expires(self):
+        self.g._support=3;self.g._start_mission();self.g._use_support()
+        e=self.enemy(self.g._x+5,self.g._y);e[5]=.01
+        before=self.g._hp
+        self.g._update_enemies(.02)
+        self.assertEqual(self.g._hp,before)
+        self.g._step(6.1)
+        e[5]=.01;self.g._invincible=0
+        self.g._update_enemies(.02)
+        self.assertLess(self.g._hp,before)
+        self.assertEqual(self.g._support_left,1)
+
+    def test_stasis_slows_motion_and_windups_without_killing(self):
+        self.g._support=4;self.g._start_mission();self.g._use_support()
+        e=self.enemy(118,165);before=e[2]
+        self.g._update_enemies(.1)
+        slowed=abs(e[2]-before)
+        e[2]=before;self.g._stasis_time=0
+        self.g._update_enemies(.1)
+        self.assertAlmostEqual(slowed/abs(e[2]-before),.35,places=4)
+        self.assertTrue(e[0])
+        self.g._stasis_time=8;e[1],e[2]=self.g._x+5,self.g._y;e[5]=.2
+        self.g._update_enemies(.1)
+        self.assertAlmostEqual(e[5],.165)
+
+    def test_new_choices_and_completion_bits_roundtrip(self):
+        import io
+        with patch('builtins.open',return_value=io.StringIO('LB2,7,4,4,300,255,2,3')):
+            self.g._load()
+        self.assertEqual((self.g._mission,self.g._weapon,self.g._support,self.g._cleared),(7,4,4,255))
+        self.g._build_ship()
+        for row in range(5):self.g._sync_ship(row)
+
+    def test_all_eight_contract_objectives_and_extraction(self):
+        for mission,info in enumerate(M.MISSIONS):
+            self.g._mission=mission;self.g._start_mission()
+            for obj in self.g._objectives:
+                self.g._x,self.g._y=obj[:2]
+                if info[1]=='PURGE':
+                    while not obj[3]:
+                        self.g._bullet(obj[0],obj[1],0,0,0,6)
+                        self.g._update_shots(.02)
+                else:self.g._update_objectives(6.1)
+            self.g._update_objectives(.1)
+            self.assertEqual(self.g._phase,'BEACON')
+            self.g._x,self.g._y=M.EXTRACT
+            self.g._update_objectives(.1);self.g._update_objectives(18);self.g._update_objectives(.1)
+            self.assertEqual(self.g._result,'EXTRACTED')
 
 
 if __name__ == '__main__':

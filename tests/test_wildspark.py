@@ -119,6 +119,35 @@ class WildsparkTests(unittest.TestCase):
         self.g._act(3)
         self.assertEqual(self.g._party[3], [10, 21, 9])
 
+    def test_safe_weakening_allows_strong_partner_to_catch_weak_foe(self):
+        self.g._party[0] = [30, 142, 0]
+        self.battle(4, 2)
+        self.g._act(6)
+        self.assertEqual(self.g._foe_hp, 1)
+        self.assertIsNone(self.g._battle_result)
+        self.g._act(3)
+        self.assertEqual(self.g._battle_result, 'BONDED')
+        self.assertIsNotNone(self.g._party[4])
+
+    def test_all_27_forms_can_be_encountered_and_caught(self):
+        seen = set()
+        for route in (4, 5, 6):
+            self.g._route = route
+            for search in range(9):
+                self.g._steps = search * 6
+                family, level = self.g._wild_target()
+                seen.add((family, M._form(level)))
+                self.g._rest()
+                self.battle(family, level)
+                while self.g._foe_hp > self.g._foe_max // 2:
+                    self.g._party[self.g._family][1] = 100
+                    self.g._act(6)
+                self.g._act(3)
+                self.assertEqual(self.g._battle_result, 'BONDED')
+        self.assertEqual(len(seen), 27)
+        self.assertEqual(self.g._caught, (1 << 27) - 1)
+        self.assertTrue(all(mon is not None for mon in self.g._party))
+
     def test_bosses_cannot_be_bonded(self):
         for kind in ('gym', 'final'):
             self.battle(**{kind: True})
@@ -259,9 +288,9 @@ class WildsparkTests(unittest.TestCase):
             g._party[0][1] = 0 if fainted else 34
             g._party[3] = [4, 38, 0]
             def script(t, state):
-                state._L.value = not (0.19 < t < 0.27)
-                state._A.value = not (0.30 < t < 0.36)
-                state._B.value = not (t > 0.5)
+                state._L.value = not (0.19 < t < 0.65)
+                state._A.value = not (0.72 < t < 0.78)
+                state._B.value = not (t > 0.95)
             with patch.object(M, 'time', Clock(g, script)), patch.object(g, '_choose', return_value=1):
                 g._battle(6, 4)
             self.assertEqual(g._family, 3)

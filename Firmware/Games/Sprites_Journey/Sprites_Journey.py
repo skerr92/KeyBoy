@@ -3,7 +3,7 @@
 """Sprite's Journey — a compact, asset-free platformer for KeyBoy.
 
 Controls: LEFT/RIGHT move, A jumps, B sends a short magic burst.  B can hurt
-bosses only while Sprite is close enough; UP + DOWN exits to the launcher.
+guardians from range; collect every spark to open the gate. UP + DOWN exits.
 """
 
 import time
@@ -11,13 +11,14 @@ import displayio
 from adafruit_display_text import label
 import terminalio
 from GameMenu import PauseMenu, save_high_score
+from KeyBoyArcade import Scenery, actor, rect
 
 
 SCREEN_W = 240
 SCREEN_H = 240
 FLOOR_Y = 218
-PLAYER_W = 12
-PLAYER_H = 14
+PLAYER_W = 16
+PLAYER_H = 22
 
 # x, y, width.  Levels are intentionally short: each is a readable 240px room.
 LEVELS = (
@@ -46,22 +47,6 @@ def _solid(width, height, color):
     return displayio.TileGrid(bitmap, pixel_shader=palette)
 
 
-def _pixel_art(rows, colors):
-    """Turn a short palette-keyed pixel map into a transparent TileGrid."""
-    height = len(rows)
-    width = len(rows[0])
-    bitmap = displayio.Bitmap(width, height, len(colors))
-    palette = displayio.Palette(len(colors))
-    palette[0] = 0
-    palette.make_transparent(0)
-    for index in range(1, len(colors)):
-        palette[index] = colors[index]
-    for y in range(height):
-        for x in range(width):
-            bitmap[x, y] = int(rows[y][x])
-    return displayio.TileGrid(bitmap, pixel_shader=palette)
-
-
 class SpritesJourney:
     def __init__(self, splash, A_btn, B_btn, Up_btn, Dwn_btn, L_btn, R_btn, Sel_btn, Audio):
         self._splash = splash
@@ -75,29 +60,17 @@ class SpritesJourney:
         self._b_was_down = False
         self._level = 0
         self._lives = 3
+        self._scenery = None
 
     def _clear(self):
         while len(self._splash):
             self._splash.pop()
 
     def _sprite(self):
-        # A tiny pale-blue sprite with a visible empty space where wings will be.
-        return _pixel_art(("001111110000", "012222221000", "012333321000", "012333321000",
-                           "001233210000", "001222210000", "000122100000", "001222210000",
-                           "012122121000", "120122102100", "000100010000", "001100011000",
-                           "011000001100", "000000000000"),
-                          (0, 0xF6F1D3, 0x71D8F5, 0x203D69))
+        return actor('hero', PLAYER_W, PLAYER_H)
 
     def _enemy(self, large=False):
-        if large:
-            rows = ("0000111111111111110000", "0001222222222222221000", "0012333333333333332100",
-                    "0123344333333333443210", "0123333433333343333210", "0123333333333333333210",
-                    "0123334333333343333210", "0123333433333334333210", "0123333333333333333210",
-                    "0012333333333333332100", "0001223333333333221000", "0000112222222222110000")
-        else:
-            rows = ("0001111000", "0012222100", "0123333210", "0123433210", "0123333210",
-                    "0012332100", "0012222100", "0102112010", "1001001001", "0000000000")
-        return _pixel_art(rows, (0, 0xD6AA62, 0x642B4A, 0xF06A6A, 0x241533))
+        return actor('guardian', 42 if large else 22, 52 if large else 30)
 
     def _message(self, title, subtitle, color=0xFFFFFF):
         self._clear()
@@ -109,8 +82,10 @@ class SpritesJourney:
 
     def _wait_for_a(self):
         while self._A.value == 0:
+            if not self._U.value and not self._D.value:self._exit=True;return
             time.sleep(0.03)
         while self._A.value:
+            if not self._U.value and not self._D.value:self._exit=True;return
             time.sleep(0.03)
         time.sleep(0.15)
 
@@ -120,22 +95,39 @@ class SpritesJourney:
 
     def _setup_level(self):
         self._clear()
-        self._splash.append(_solid(SCREEN_W, SCREEN_H, 0x17254A))
-        # A handful of fixed stars gives each room depth without allocating art files.
-        for x, y in ((14, 24), (52, 54), (97, 22), (143, 63), (208, 35), (225, 96), (37, 109)):
-            star = _solid(2, 2, 0xA7D9FF)
-            star.x, star.y = x, y
-            self._splash.append(star)
-        platforms = []
-        for x, y, width in LEVELS[self._level]:
-            tile = _solid(width, 8, 0x5AA66B if y == FLOOR_Y else 0x4C8C98)
-            tile.x, tile.y = x, y
-            self._splash.append(tile)
-            platforms.append((x, y, width))
-        for x, y, width, height in HAZARDS[self._level]:
-            spike = _solid(width, height, 0xE8786D)
-            spike.x, spike.y = x, y
-            self._splash.append(spike)
+        if self._scenery is None:
+            self._scenery = Scenery()
+        self._scenery.draw('journey', self._level)
+        platforms = list(LEVELS[self._level])
+        for x, y, width in platforms:
+            rect(self._scenery,x,y,width,8,10)
+            rect(self._scenery,x,y,width,2,8)
+            for xx in range(x+3,x+width-2,7):
+                rect(self._scenery,xx,y+3,3,2,12)
+        for x,y,width,height in HAZARDS[self._level]:
+            for xx in range(x,x+width,5):
+                for h in range(height):
+                    rect(self._scenery,xx+2-h//3,y+h,1+2*(h//3),1,15)
+        # An actual exit gate and collectible route replace the invisible edge.
+        rect(self._scenery,223,185,15,33,3)
+        rect(self._scenery,227,189,7,29,4)
+        self._scenery.attach(self._splash)
+        self._sparks = []
+        for x,y,width in platforms[1:]:
+            spark=actor('spark',8,10)
+            spark.x,spark.y=x+width//2-4,y-13
+            self._splash.append(spark)
+            self._sparks.append(spark)
+        self._bolts=[]
+        for _ in range(3):
+            bolt=actor('spark',8,6);bolt.hidden=True
+            self._splash.append(bolt)
+            self._bolts.append([bolt,0])
+        self._thorns=[]
+        for _ in range(3):
+            thorn=actor('spark',7,7);thorn.pixel_shader[13]=0xF18D72;thorn.hidden=True
+            self._splash.append(thorn)
+            self._thorns.append([thorn,-4])
         player = self._sprite()
         player.x, player.y = 16, FLOOR_Y - PLAYER_H
         self._splash.append(player)
@@ -147,7 +139,7 @@ class SpritesJourney:
             boss = self._enemy(bw > 25)
             boss.x, boss.y = bx, by
             self._splash.append(boss)
-            boss_label = label.Label(terminalio.FONT, text=name + " " + str(health), color=0xFFCF70, x=94, y=13)
+            boss_label = label.Label(terminalio.FONT, text=name + " " + str(health), color=0xFFCF70, x=105, y=13)
             self._splash.append(boss_label)
         else:
             boss_label = None
@@ -168,6 +160,14 @@ class SpritesJourney:
         facing = 1
         boss_direction = -1
         last_boss_move = time.monotonic()
+        last_boss_shot = last_boss_move
+        last_ground = last_boss_move
+        jump_until = 0
+        last_magic = -1
+        self._room_hp = 3
+        hurt_until = 0
+        hint = label.Label(terminalio.FONT, text="Gather sparks / A jump / B magic", color=0xEDD49B, x=5, y=33)
+        self._splash.append(hint)
         while not self._exit:
             now = time.monotonic()
             move_x = 0
@@ -175,6 +175,8 @@ class SpritesJourney:
                 move_x, facing = -3, -1
             elif self._R.value == 0:
                 move_x, facing = 3, 1
+            player[0]=int(now*9)%2 if move_x else 0
+            player.flip_x=facing<0
             a_down = self._A.value == 0
             b_down = self._B.value == 0
             on_ground = False
@@ -182,13 +184,19 @@ class SpritesJourney:
                 if player.y + PLAYER_H >= py - 2 and player.y + PLAYER_H <= py + 5 and player.x + PLAYER_W > px and player.x < px + pw:
                     on_ground = True
                     break
-            if a_down and not self._a_was_down and on_ground:
-                velocity_y = -10
+            if on_ground:
+                last_ground = now
+            if a_down and not self._a_was_down:
+                jump_until = now + 0.14
+            if jump_until > now and now - last_ground < 0.10:
+                velocity_y = -12
+                jump_until = 0
+                last_ground = -1
                 self._audio.play("jump")
             self._a_was_down = a_down
             player.x = max(0, min(SCREEN_W - PLAYER_W, player.x + move_x))
             old_y = player.y
-            velocity_y = min(8, velocity_y + 1)
+            velocity_y = min(3 if a_down and self._level >= 3 else 8, velocity_y + 1)
             player.y += velocity_y
             if velocity_y >= 0:
                 for px, py, pw in platforms:
@@ -201,38 +209,94 @@ class SpritesJourney:
                 if boss.x < 128 or boss.x + boss_data[2] > 228:
                     boss_direction *= -1
                 last_boss_move = now
-            if b_down and not self._b_was_down and boss:
-                distance = boss.x - (player.x + PLAYER_W // 2)
-                if abs(distance) < 48 and (distance * facing) >= -10 and abs(boss.y - player.y) < 42:
-                    boss_hp -= 1
-                    self._audio.play("shoot")
-                    boss_label.text = boss_data[5] + " " + str(max(0, boss_hp))
-                    if boss_hp <= 0:
-                        self._audio.play("win")
+            enemy_hit=False
+            if boss:
+                boss_label.color=0xF18D72 if now-last_boss_shot>1 else 0xFFCF70
+                if now-last_boss_shot>1.4:
+                    for thorn in self._thorns:
+                        if thorn[0].hidden:
+                            thorn[0].hidden=False
+                            thorn[0].x,thorn[0].y=boss.x+boss_data[2]//2,boss.y+boss_data[3]-14
+                            thorn[1]=-4 if player.x<boss.x else 4
+                            last_boss_shot=now
+                            break
+            for thorn in self._thorns:
+                sprite=thorn[0]
+                if not boss:sprite.hidden=True
+                if sprite.hidden:continue
+                sprite.x+=thorn[1]
+                if sprite.x<0 or sprite.x>233:sprite.hidden=True
+                elif self._overlap(player.x,player.y,PLAYER_W,PLAYER_H,sprite.x,sprite.y,7,7):
+                    sprite.hidden=True;enemy_hit=True
+            if b_down and now - last_magic > 0.32:
+                for bolt in self._bolts:
+                    if bolt[0].hidden:
+                        bolt[0].x,bolt[0].y=player.x+4,player.y+7
+                        bolt[0].hidden=False
+                        bolt[1]=facing*6
+                        last_magic=now
+                        self._audio.play('shoot')
+                        break
+            for bolt in self._bolts:
+                sprite=bolt[0]
+                if sprite.hidden:continue
+                sprite.x+=bolt[1]
+                if sprite.x<0 or sprite.x>232:
+                    sprite.hidden=True
+                elif boss and self._overlap(sprite.x,sprite.y,8,6,boss.x,boss.y,boss_data[2],boss_data[3]):
+                    sprite.hidden=True
+                    boss_hp-=1
+                    boss_label.text=boss_data[5]+' '+str(max(0,boss_hp))
+                    self._audio.play('hit')
+                    if boss_hp<=0:
+                        self._audio.play('win')
                         self._splash.remove(boss)
                         self._splash.remove(boss_label)
-                        boss = None
+                        boss=None
+                        self._lives=min(5,self._lives+1)
+            for spark in self._sparks:
+                if not spark.hidden and self._overlap(player.x,player.y,PLAYER_W,PLAYER_H,spark.x,spark.y,8,10):
+                    spark.hidden=True
+                    self._audio.play('collect')
+            remaining=sum(1 for spark in self._sparks if not spark.hidden)
+            hint_text = ('SPARKS %d / Clear guardian' % remaining if boss else
+                         'SPARKS %d / Reach the gate' % remaining) if remaining or boss else 'GATE OPEN! Head right'
+            if hint.text != hint_text:hint.text=hint_text
             self._b_was_down = b_down
-            hit = player.y > SCREEN_H
+            hit = player.y > SCREEN_H or enemy_hit
             for hx, hy, hw, hh in HAZARDS[self._level]:
                 hit = hit or self._overlap(player.x, player.y, PLAYER_W, PLAYER_H, hx, hy, hw, hh)
             if boss and self._overlap(player.x, player.y, PLAYER_W, PLAYER_H, boss.x, boss.y, boss_data[2], boss_data[3]):
                 hit = True
-            if hit:
+            if hit and now >= hurt_until:
                 self._audio.play("hit")
-                self._lose_life()
-                return False
+                self._room_hp -= 1
+                if self._room_hp <= 0:
+                    self._lose_life()
+                    return False
+                player.x, player.y = 16, FLOOR_Y - PLAYER_H
+                velocity_y = 0
+                hurt_until = now + 1.2
+            player.hidden = now < hurt_until and int(now*10)%2 == 0
             # Goal: right edge, only after the level's guardian has fallen.
-            if player.x > 222 and boss is None:
+            if player.x >= SCREEN_W - PLAYER_W - 2 and boss is None and remaining == 0:
                 self._audio.play("collect")
                 save_high_score("/sprites_journey.txt", self._level + 1)
                 return True
             if self._pause_menu.pressed():
+                paused = time.monotonic()
                 if self._pause_menu.open("SPRITE'S JOURNEY", self._level + 1, "/sprites_journey.txt"):
                     self._exit = True
+                delay=time.monotonic()-paused
+                hurt_until+=delay
+                last_magic+=delay
+                last_boss_move+=delay
+                last_boss_shot+=delay
+                self._a_was_down=not self._A.value
             if self._D.value == 0 and self._U.value == 0:  # deliberate two-button quit gesture
                 self._exit = True
-            hud.text = "LIVES " + str(self._lives) + "   " + str(self._level + 1) + "/9"
+            hud_text = "HP%d *%d %d/9" % (self._room_hp,self._lives,self._level+1)
+            if hud.text != hud_text:hud.text=hud_text
             time.sleep(0.028)
         return False
 
@@ -247,7 +311,7 @@ class SpritesJourney:
                     self._wait_for_a()
                     self._level, self._lives = 0, 3
                 else:
-                    self._message("MAGIC FOUND", "Press A for the next path", 0xBCEAFF)
+                    self._message("MAGIC FOUND", "Hold A to glide! Press A" if self._level == 3 else "Find every spark. Press A", 0xBCEAFF)
                     self._wait_for_a()
         self._clear()
         return True

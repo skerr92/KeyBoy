@@ -33,4 +33,7 @@ g._board_clock = 8
 g._view['craft'].hidden = False
 g._sync_field(False)
 render(g._splash, out / 'extraction.png')
-print('Wrote ship, three biomes and extraction previews to', out)
+g._mission,g._weapon,g._support=7,4,4
+g._build_ship();g._sync_ship(2)
+render(g._splash,out/'expanded-loadout.png')
+print('Wrote ship, biomes, extraction and expanded loadout previews to',out)

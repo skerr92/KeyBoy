@@ -18,12 +18,23 @@ MISSIONS = (("ASHFALL RELAY", "SALVAGE", 0, 3, 100, 1, 45),
             ("BRACKEN FRONT", "PURGE", 1, 3, 110, 2, 60),
             ("FROST ARRAY", "UPLINK", 2, 2, 120, 2, 65),
             ("CINDER WASTES", "SALVAGE", 0, 4, 100, 3, 80),
-            ("LAST TRANSMISSION", "UPLINK", 2, 3, 150, 4, 100))
+            ("LAST TRANSMISSION", "UPLINK", 2, 3, 150, 4, 100),
+            ("HIVE BREAKER", "PURGE", 0, 4, 150, 4, 120),
+            ("GREEN RECOVERY", "SALVAGE", 1, 4, 125, 2, 80),
+            ("POLAR NETWORK", "UPLINK", 2, 4, 170, 3, 115))
 # name, magazine, reserve, cadence, damage, reload, pellets, speed
 WEAPONS = (("CARBINE", 18, 90, 0.16, 2, 1.3, 1, 190),
            ("SCATTERGUN", 6, 36, 0.65, 3, 1.7, 3, 170),
-           ("LANCER", 6, 30, 0.48, 6, 1.9, 1, 230))
-SUPPORTS = ("ORBITAL", "SENTRY", "RESUPPLY")
+           ("LANCER", 6, 30, 0.48, 6, 1.9, 1, 230),
+           ("AUTOCANNON", 32, 128, 0.11, 2, 2.5, 1, 185),
+           ("BREACHER", 4, 28, 0.85, 3, 2.0, 5, 160))
+SUPPORTS = ("ORBITAL", "SENTRY", "RESUPPLY", "SHIELD", "STASIS")
+WEAPON_DETAILS = ("18 shots / fast / all-rounder", "6 shots / spread / close range",
+                  "6 shots / piercing / heavy hit", "32 shots / sustained / slow reload",
+                  "4 shots / five pellets / wide cone")
+SUPPORT_DETAILS = ("3 strikes / mark ahead / delayed", "2 sentries / 14s covering fire",
+                   "2 drops / heal + refill ammo", "2 shields / 6s damage immunity",
+                   "2 pulses / 8s slows all hostiles")
 OBJECTIVE_POS = ((35, 65), (199, 61), (39, 184), (147, 120))
 ROCKS = ((76, 62, 28, 22), (139, 154, 25, 21), (52, 119, 26, 20), (177, 102, 29, 19))
 EXTRACT = (198, 193)
@@ -433,8 +444,8 @@ class LastBeacon:
                 if len(values) != 7:
                     return
                 mission, weapon, support, credits, cleared, armor, power = values
-                if not (0 <= mission < 5 and 0 <= weapon < 3 and 0 <= support < 3
-                        and credits >= 0 and 0 <= cleared < 32 and 0 <= armor <= 3 and 0 <= power <= 3):
+                if not (0 <= mission < len(MISSIONS) and 0 <= weapon < len(WEAPONS) and 0 <= support < len(SUPPORTS)
+                        and credits >= 0 and 0 <= cleared < (1 << len(MISSIONS)) and 0 <= armor <= 3 and 0 <= power <= 3):
                     return
             else:
                 values = [int(v) for v in data]
@@ -516,8 +527,8 @@ class LastBeacon:
                 row.color = color
         mission = MISSIONS[self._mission]
         details = ("%s x%d / %ds / %s" % (mission[1], mission[3], mission[4], "CLEARED" if self._cleared & (1 << self._mission) else "NEW"),
-                   ("18 shots / fast / all-rounder", "6 shots / spread / close range", "6 shots / piercing / heavy hit")[self._weapon],
-                   ("3 strikes / mark ahead / delayed", "2 sentries / 14s covering fire", "2 drops / heal + refill ammo")[self._support],
+                   WEAPON_DETAILS[self._weapon],
+                   SUPPORT_DETAILS[self._support],
                    "$%d  Armor %d/3  Power %d/3" % (self._credits, self._armor, self._power),
                    "A launch! Complete goal, then extract.")
         _set(self._view["detail"], details[choice])
@@ -672,6 +683,7 @@ class LastBeacon:
         self._support_left = 3 if self._support == 0 else 2
         self._support_cd, self._strike, self._turret_time, self._turret_shot = 0.0, 0.0, 0.0, 0.0
         self._strike_x, self._strike_y = 0, 0
+        self._shield_time, self._stasis_time = 0.0, 0.0
         self._phase, self._extract_clock, self._board_clock = "OBJECTIVE", 0.0, 0.0
         self._spawn_clock, self._age, self._kills = 2.8, 0.0, 0
         self._result, self._effect_time = None, 0.0
@@ -795,7 +807,7 @@ class LastBeacon:
             return
         target = self._target(self._x, self._y, self._aim_x, self._aim_y)
         dx, dy = _unit(target[0] - self._x, target[1] - self._y) if target else (self._aim_x, self._aim_y)
-        for spread in ((0,) if needed == 1 else (-0.23, 0, 0.23)):
+        for spread in ((0,) if needed == 1 else (-0.23, 0, 0.23) if needed == 3 else (-0.40, -0.20, 0, 0.20, 0.40)):
             vx, vy = _unit(dx - dy * spread, dy + dx * spread)
             self._bullet(self._x + dx * 8, self._y + dy * 8, vx, vy,
                          180 if sidearm else weapon[7], 1 if sidearm else weapon[4] + self._power,
@@ -829,10 +841,18 @@ class LastBeacon:
             _place(self._view["turret"], self._x - 14, self._y - 14)
             self._view["turret"].hidden = False
             self._notice_set("Sentry online. 14 seconds of cover.")
-        else:
+        elif self._support == 2:
             self._resupply()
             self._effect(self._x, self._y, 3, 0.4)
             self._notice_set("Resupplied: armor and ammunition.")
+        elif self._support == 3:
+            self._shield_time = 6.0
+            self._effect(self._x, self._y, 3, 0.4)
+            self._notice_set("Shield active: 6 seconds protected.")
+        else:
+            self._stasis_time = 8.0
+            self._effect(self._x, self._y, 1, 0.4)
+            self._notice_set("Stasis active: hostiles slowed 8s.")
 
     def _resupply(self):
         self._hp = min(6 + self._armor * 2, self._hp + 3)
@@ -894,13 +914,14 @@ class LastBeacon:
             _place(shot[9], shot[1] - 3, shot[2] - 3)
 
     def _update_enemies(self, dt):
+        dt *= 0.35 if self._stasis_time > 0 else 1.0
         for i, e in enumerate(self._enemies):
             if not e[0]:
                 continue
             distance = _d2(self._x, self._y, e[1], e[2])
             if e[5] > 0:
                 e[5] -= dt
-                if e[5] <= 0 and distance < 21 ** 2 and self._invincible <= 0:
+                if e[5] <= 0 and distance < 21 ** 2 and self._invincible <= 0 and self._shield_time <= 0:
                     self._hp -= 2 if e[4] == 2 else 1
                     self._invincible = 0.8
                     self._audio.play("hit")
@@ -970,6 +991,8 @@ class LastBeacon:
         self._shot_clock -= dt
         self._invincible -= dt
         self._support_cd -= dt
+        self._shield_time = max(0.0, self._shield_time - dt)
+        self._stasis_time = max(0.0, self._stasis_time - dt)
         self._notice_time -= dt
         self._effect_time -= dt
         if self._effect_time <= 0:
@@ -1040,7 +1063,7 @@ class LastBeacon:
         done = sum(1 for obj in self._objectives if obj[3])
         _set(self._view["status"], "%02d:%02d  HP %d  GOAL %d/%d" % (remain // 60, remain % 60, self._hp, done, len(self._objectives)))
         ammo = "RELOAD" if self._reload > 0 else ("SIDEARM" if self._mag == 0 and self._reserve == 0 else "%d/%d" % (self._mag, self._reserve))
-        _set(self._view["ammo"], "%s %s  KIT %d" % (WEAPONS[self._weapon][0][:7], ammo, self._support_left))
+        _set(self._view["ammo"], "%s %s  KIT %d%s" % (WEAPONS[self._weapon][0][:7], ammo, self._support_left, " SH" if self._shield_time > 0 else " ST" if self._stasis_time > 0 else ""))
         if self._phase == "INBOUND":
             hint = "EVAC inbound %ds / stay alive" % max(0, int(self._extract_clock + 0.99))
             if self._extract_clock < 3:

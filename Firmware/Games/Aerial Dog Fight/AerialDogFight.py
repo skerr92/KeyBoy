@@ -1,225 +1,205 @@
 # SPDX-FileCopyrightText: Copyright (c) 2026 Seth Kerr
 # SPDX-License-Identifier: MIT
-"""Aerial Dog Fight — an asset-free top-down arcade dogfight for KeyBoy.
+"""Four coastal sorties, sector refits, fuel-limited boost and a persistent ace.
 
-Controls: D-pad flies, A fires, B boosts, and UP + DOWN returns to the menu.
+D-pad flies, A fires, B boosts, SEL pauses. Up+Down returns to the launcher.
+All projectiles and planes are allocated before the sortie, never during firing.
 """
-
 import random
 import time
 import displayio
 from adafruit_display_text import label
 import terminalio
 from GameMenu import PauseMenu, save_high_score
-
-SCREEN_W = 240
-SCREEN_H = 240
-
-
-def _solid(width, height, color):
-    bitmap = displayio.Bitmap(width, height, 1)
-    palette = displayio.Palette(1)
-    palette[0] = color
-    return displayio.TileGrid(bitmap, pixel_shader=palette)
-
-
-def _art(rows, colors):
-    bitmap = displayio.Bitmap(len(rows[0]), len(rows), len(colors))
-    palette = displayio.Palette(len(colors))
-    palette[0] = 0
-    palette.make_transparent(0)
-    for index in range(1, len(colors)):
-        palette[index] = colors[index]
-    for y, row in enumerate(rows):
-        for x, value in enumerate(row):
-            bitmap[x, y] = int(value)
-    return displayio.TileGrid(bitmap, pixel_shader=palette)
-
-
-def _player_plane():
-    return _art(("00000100000", "00001200000", "00012220000", "00122222000",
-                 "01223332210", "12223332221", "00122222000", "00012121000",
-                 "00012021000", "00010001000", "00000000000"),
-                (0, 0xD9F6FF, 0x53B9D8, 0x25476B))
-
-
-def _enemy_plane(ace=False):
-    if ace:
-        rows = ("00000300000", "00003330000", "00032223000", "00322222300",
-                "03221112230", "32221112223", "00322222300", "00032223000",
-                "00003030000", "00003030000", "00000000000")
-        return _art(rows, (0, 0xF7D887, 0xD7645C, 0x662B44))
-    return _art(("00000300000", "00003330000", "00032223000", "00322222300",
-                 "03221112230", "32221112223", "00322222300", "00030303000",
-                 "00030003000", "00000000000"),
-                (0, 0xF4D27F, 0xDB665C, 0x612740))
+from KeyBoyArcade import Scenery, actor, choose
 
 
 class AerialDogFight:
-    def __init__(self, splash, A_btn, B_btn, Up_btn, Dwn_btn, L_btn, R_btn, Sel_btn, Audio):
-        self._splash = splash
-        self._A, self._B = A_btn, B_btn
-        self._U, self._D = Up_btn, Dwn_btn
-        self._L, self._R = L_btn, R_btn
-        self._pause_menu = PauseMenu(splash, Sel_btn, A_btn, Up_btn, Dwn_btn)
-        self._audio = Audio
-        self._exit = False
-        self._last_shot = 0
+    def __init__(self,splash,A_btn,B_btn,Up_btn,Dwn_btn,L_btn,R_btn,Sel_btn,Audio):
+        self._splash=splash
+        self._A,self._B,self._U,self._D,self._L,self._R=A_btn,B_btn,Up_btn,Dwn_btn,L_btn,R_btn
+        self._pause_menu=PauseMenu(splash,Sel_btn,A_btn,Up_btn,Dwn_btn)
+        self._audio=Audio
+        self._exit=False
+        self._scenery=None
 
     def _clear(self):
-        while len(self._splash):
-            self._splash.pop()
-
-    def _message(self, heading, detail, color=0xB8E7FF):
-        self._clear()
-        self._splash.append(_solid(SCREEN_W, SCREEN_H, 0x10213D))
-        self._splash.append(label.Label(terminalio.FONT, text=heading, color=color, scale=2, x=24, y=90))
-        self._splash.append(label.Label(terminalio.FONT, text=detail, color=0xD5E6FF, x=18, y=123))
-
-    def _wait_for_a(self):
-        while self._A.value == 0:
-            time.sleep(0.03)
-        while self._A.value:
-            time.sleep(0.03)
-        time.sleep(0.12)
+        while len(self._splash):self._splash.pop()
 
     @staticmethod
-    def _hit(ax, ay, aw, ah, bx, by, bw, bh):
-        return ax < bx + bw and ax + aw > bx and ay < by + bh and ay + ah > by
+    def _hit(ax,ay,aw,ah,bx,by,bw,bh):
+        return ax<bx+bw and ax+aw>bx and ay<by+bh and ay+ah>by
 
-    def _add_bullet(self, bullets, x, y, velocity, color):
-        if len(bullets) >= 8:
-            return
-        sprite = _solid(3, 7, color)
-        sprite.x, sprite.y = x, y
-        self._splash.append(sprite)
-        bullets.append([sprite, velocity])
+    def _setup_sortie(self):
+        self._clear()
+        if self._scenery is None:self._scenery=Scenery()
+        self._scenery.draw('flight')
+        self._scenery.attach(self._splash)
+        self._player=actor('plane',24,26)
+        self._player.x,self._player.y=108,190
+        self._splash.append(self._player)
+        self._px,self._py=108.0,190.0
+        self._score,self._hull,self._wave,self._spawned=0,4,1,0
+        self._clock,self._shot,self._spawn,self._hurt=0.0,-1.0,-1.0,0.0
+        self._fuel,self._weapon=3.0,0
+        self._armored=False
+        self._ace_spawned,self._ace_dead=False,False
+        self._enemies=[]
+        for i in range(7):
+            ace=i==6
+            grid=actor('ace' if ace else 'raider',32 if ace else 24,34 if ace else 26)
+            grid.hidden=True;self._splash.append(grid)
+            # sprite, x, y, horizontal speed, health, next shot, ace
+            self._enemies.append([grid,0.0,0.0,0,0,0.0,ace])
+        self._bullets=[]
+        for i in range(28):
+            grid=actor('spark',4,8)
+            grid.hidden=True;self._splash.append(grid)
+            # sprite, x, y, vx, vy, hostile; 12 player / 16 hostile slots
+            self._bullets.append([grid,0.0,0.0,0.0,0.0,i>=12])
+        self._hud=label.Label(terminalio.FONT,text='',color=0xEAE1BC,x=5,y=10)
+        self._hint=label.Label(terminalio.FONT,text='',color=0xADD2CE,x=5,y=22)
+        self._splash.append(self._hud);self._splash.append(self._hint)
+        self._sync()
 
-    def _spawn_enemy(self, enemies, wave, ace=False):
-        plane = _enemy_plane(ace)
-        plane.x = random.randint(10, 218)
-        plane.y = -12
-        enemies.append([plane, random.choice((-1, 1)), 1 + wave // 3, 5 if ace else 1,
-                        time.monotonic() + random.uniform(0.8, 1.8), ace])
-        self._splash.append(plane)
+    def _sync(self):
+        text='S%d HP%d SECTOR%d/4' % (self._score,self._hull,self._wave)
+        if self._hud.text!=text:self._hud.text=text
+        ace=self._enemies[6]
+        text=('ACE HP%d / DODGE THE SPREAD' % ace[4] if not ace[0].hidden else
+              'BOOST %d%% / %s' % (int(self._fuel*100/3),'TWIN' if self._weapon==0 else 'RAPID'))
+        if self._hint.text!=text:self._hint.text=text
+
+    def _fire(self,x,y,hostile=False,spread=0):
+        for shot in self._bullets:
+            if shot[5]==hostile and shot[0].hidden:
+                shot[0].hidden=False
+                shot[1],shot[2],shot[3],shot[4]=float(x),float(y),spread,125 if hostile else -250
+                shot[0].x,shot[0].y=int(x),int(y)
+                return True
+        return False
+
+    def _spawn_enemy(self,ace=False):
+        slots=self._enemies[6:] if ace else self._enemies[:6]
+        for enemy in slots:
+            if enemy[0].hidden:
+                enemy[0].hidden=False
+                enemy[1],enemy[2]=float(random.randint(15,195)),-34.0
+                enemy[3]=random.choice((-28,28))
+                enemy[4]=20 if ace else 1+(self._wave>=3)
+                enemy[5]=self._clock+1.6
+                enemy[0].x,enemy[0].y=int(enemy[1]),-34
+                return True
+        return False
+
+    def _damage(self):
+        if self._clock>=self._hurt:
+            self._hull-=1
+            self._hurt=self._clock+1.1
+            self._audio.play('hit')
+
+    def _step(self,dt,mx=0,my=0,fire=False,boost=False):
+        dt=min(.05,max(0,dt))
+        self._clock+=dt
+        boosting=boost and self._fuel>dt
+        self._fuel=max(0,self._fuel-dt) if boosting else min(3,self._fuel+dt*.5)
+        speed=(145 if boosting else 80) if self._armored else (180 if boosting else 95)
+        if mx and my:speed*=.7071
+        self._px=max(0,min(216,self._px+mx*speed*dt))
+        self._py=max(30,min(214,self._py+my*speed*dt))
+        self._player.x,self._player.y=int(self._px),int(self._py)
+        self._player.hidden=self._clock<self._hurt and int(self._clock*12)%2==0
+        if fire and self._clock-self._shot >= (.24 if self._weapon==0 else .13):
+            fired=self._fire(self._px+5,self._py-5)
+            if self._weapon==0:self._fire(self._px+16,self._py-5)
+            if fired:self._audio.play('shoot');self._shot=self._clock
+        target=4+self._wave*2
+        if self._spawned<target and self._clock-self._spawn>.95:
+            if self._spawn_enemy():self._spawned+=1;self._spawn=self._clock
+        for enemy in self._enemies:
+            sprite=enemy[0]
+            if sprite.hidden:continue
+            enemy[1]+=enemy[3]*dt
+            enemy[2]+=((0 if enemy[2]>=53 else 45) if enemy[6] else 32+self._wave*8)*dt
+            if enemy[1]<5:enemy[1]=5;enemy[3]=abs(enemy[3])
+            if enemy[1]>203:enemy[1]=203;enemy[3]=-abs(enemy[3])
+            sprite.x,sprite.y=int(enemy[1]),int(enemy[2])
+            if self._clock>=enemy[5] and sprite.y>27:
+                self._fire(sprite.x+12,sprite.y+25,True)
+                if enemy[6]:
+                    self._fire(sprite.x+12,sprite.y+25,True,-45)
+                    self._fire(sprite.x+12,sprite.y+25,True,45)
+                enemy[5]=self._clock+(.8 if enemy[6] else 1.6)
+            if sprite.y>240:sprite.hidden=True
+            if self._hit(self._px+4,self._py+4,16,18,sprite.x,sprite.y,32 if enemy[6] else 24,34 if enemy[6] else 26):
+                self._damage()
+                if not enemy[6]:sprite.hidden=True
+        for shot in self._bullets:
+            sprite=shot[0]
+            if sprite.hidden:continue
+            shot[1]+=shot[3]*dt;shot[2]+=shot[4]*dt
+            sprite.x,sprite.y=int(shot[1]),int(shot[2])
+            if sprite.y<27 or sprite.y>240 or sprite.x<0 or sprite.x>239:
+                sprite.hidden=True;continue
+            if shot[5]:
+                if self._hit(sprite.x,sprite.y,4,8,self._px+4,self._py+4,16,18):
+                    sprite.hidden=True;self._damage()
+            else:
+                for enemy in self._enemies:
+                    e=enemy[0]
+                    if not e.hidden and self._hit(sprite.x,sprite.y,4,8,e.x,e.y,32 if enemy[6] else 24,34 if enemy[6] else 26):
+                        sprite.hidden=True;enemy[4]-=1
+                        if enemy[4]<=0:
+                            e.hidden=True;self._score+=1000 if enemy[6] else 100
+                            self._audio.play('collect')
+                            if enemy[6]:self._ace_dead=True
+                        break
+        self._sync()
+        if self._hull<=0:return 'lost'
+        if self._ace_dead:return 'won'
+        if self._spawned>=target and all(e[0].hidden for e in self._enemies):
+            if self._wave==4:
+                if not self._ace_spawned:self._spawn_enemy(True);self._ace_spawned=True
+            else:return 'sector'
+        return None
+
+    def _refit(self):
+        for shot in self._bullets:shot[0].hidden=True
+        choice=choose(self._splash,'SECTOR REFIT',('Twin cannons','Rapid cannon','Repair +2 hull'),(self._A,self._U,self._D))
+        if choice<0:self._exit=True
+        elif choice<2:self._weapon=choice
+        else:self._hull=min(6,self._hull+2)
+        self._fuel=3
+        self._wave+=1;self._spawned=0;self._spawn=self._clock
 
     def _run(self):
-        self._clear()
-        self._splash.append(_solid(SCREEN_W, SCREEN_H, 0x10213D))
-        for x, y in ((18, 30), (61, 78), (112, 37), (161, 93), (211, 48), (36, 160), (194, 182)):
-            star = _solid(2, 2, 0x88BDE8)
-            star.x, star.y = x, y
-            self._splash.append(star)
-        player = _player_plane()
-        player.x, player.y = 115, 190
-        self._splash.append(player)
-        score, hull, wave, spawned = 0, 3, 1, 0
-        enemies, player_bullets, enemy_bullets = [], [], []
-        hud = label.Label(terminalio.FONT, text="S 0  H 3  W 1", color=0xFFFFFF, x=6, y=12)
-        self._splash.append(hud)
-        last_spawn = 0
-        ace_spawned = False
+        self._setup_sortie()
+        choice=choose(self._splash,'CHOOSE LOADOUT',('Twin cannons','Rapid cannon','Armor +2 HP / slower'),(self._A,self._U,self._D))
+        if choice<0:self._exit=True;return None
+        self._weapon=1 if choice==1 else 0
+        if choice==2:self._hull=6;self._armored=True
+        last=time.monotonic()
         while not self._exit:
-            now = time.monotonic()
-            speed = 4 if self._B.value == 0 else 2
-            if self._L.value == 0:
-                player.x = max(0, player.x - speed)
-            if self._R.value == 0:
-                player.x = min(SCREEN_W - 11, player.x + speed)
-            if self._U.value == 0:
-                player.y = max(24, player.y - speed)
-            if self._D.value == 0:
-                player.y = min(SCREEN_H - 12, player.y + speed)
-            a_down = self._A.value == 0
-            if a_down and now - self._last_shot > 0.12:
-                self._add_bullet(player_bullets, player.x + 4, player.y - 6, -7, 0xA6F4FF)
-                self._audio.play("shoot")
-                self._last_shot = now
-            target_spawns = 4 + wave
-            if spawned < target_spawns and now - last_spawn > 0.75:
-                self._spawn_enemy(enemies, wave)
-                spawned += 1
-                last_spawn = now
-            if wave == 4 and not ace_spawned and spawned >= target_spawns and not enemies:
-                self._spawn_enemy(enemies, wave, True)
-                ace_spawned = True
-            for bullet in player_bullets[:]:
-                bullet[0].y += bullet[1]
-                if bullet[0].y < 20:
-                    self._splash.remove(bullet[0])
-                    player_bullets.remove(bullet)
-                    continue
-                for enemy in enemies[:]:
-                    if self._hit(bullet[0].x, bullet[0].y, 3, 7, enemy[0].x, enemy[0].y, 11, 11):
-                        self._splash.remove(bullet[0])
-                        player_bullets.remove(bullet)
-                        enemy[3] -= 1
-                        if enemy[3] <= 0:
-                            self._audio.play("collect")
-                            self._splash.remove(enemy[0])
-                            enemies.remove(enemy)
-                            score += 500 if enemy[5] else 100
-                        break
-            for enemy in enemies[:]:
-                enemy[0].x += enemy[1]
-                enemy[0].y += enemy[2]
-                if enemy[0].x < 2 or enemy[0].x > 227:
-                    enemy[1] *= -1
-                if now >= enemy[4]:
-                    self._add_bullet(enemy_bullets, enemy[0].x + 4, enemy[0].y + 10, 4, 0xFF9B72)
-                    enemy[4] = now + (0.55 if enemy[5] else random.uniform(1.1, 2.1))
-                if enemy[0].y > SCREEN_H:
-                    self._splash.remove(enemy[0])
-                    enemies.remove(enemy)
-            for bullet in enemy_bullets[:]:
-                bullet[0].y += bullet[1]
-                if bullet[0].y > SCREEN_H:
-                    self._splash.remove(bullet[0])
-                    enemy_bullets.remove(bullet)
-                    continue
-                if self._hit(bullet[0].x, bullet[0].y, 3, 7, player.x, player.y, 11, 11):
-                    self._splash.remove(bullet[0])
-                    enemy_bullets.remove(bullet)
-                    hull -= 1
-                    self._audio.play("hit")
-            for enemy in enemies[:]:
-                if self._hit(player.x, player.y, 11, 11, enemy[0].x, enemy[0].y, 11, 11):
-                    self._splash.remove(enemy[0])
-                    enemies.remove(enemy)
-                    hull -= 1
-                    self._audio.play("hit")
-            if hull <= 0:
-                self._audio.play("lose")
-                save_high_score("/dogfight.txt", score)
-                return False
-            if wave < 4 and spawned >= target_spawns and not enemies:
-                wave += 1
-                spawned = 0
-            if ace_spawned and not enemies:
-                self._audio.play("win")
-                save_high_score("/dogfight.txt", score)
-                return True
-            hud.text = "S " + str(score) + "  H " + str(hull) + "  W " + str(wave)
+            now=time.monotonic();dt=now-last;last=now
+            if not self._U.value and not self._D.value:self._exit=True;break
             if self._pause_menu.pressed():
-                if self._pause_menu.open("DOG FIGHT", score, "/dogfight.txt"):
-                    self._exit = True
-            if self._U.value == 0 and self._D.value == 0:
-                self._exit = True
-            time.sleep(0.027)
+                if self._pause_menu.open('DOG FIGHT',self._score,'/dogfight.txt'):self._exit=True
+                last=time.monotonic();continue
+            result=self._step(dt,int(not self._R.value)-int(not self._L.value),
+                              int(not self._D.value)-int(not self._U.value),not self._A.value,not self._B.value)
+            if result=='sector':self._refit();last=time.monotonic()
+            elif result:
+                save_high_score('/dogfight.txt',self._score)
+                self._audio.play('win' if result=='won' else 'lose')
+                return result=='won'
+            time.sleep(max(.001,.03-(time.monotonic()-now)))
         return None
 
     def Game(self):
-        self._exit = False
-        self._message("AERIAL DOG FIGHT", "D-pad fly  A fire  B boost")
-        self._wait_for_a()
         while not self._exit:
-            result = self._run()
-            if result is None:
-                break
-            if result:
-                self._message("SKIES CLEARED", "Ace defeated!  Press A", 0xFFE28A)
-            else:
-                self._message("PLANE DOWN", "Press A to sortie again", 0xFF9A91)
-            self._wait_for_a()
+            result=self._run()
+            if result is None:break
+            choice=choose(self._splash,'SKIES CLEARED' if result else 'PLANE DOWN',('Fly again','Return to launcher'),(self._A,self._U,self._D))
+            if choice!=0:self._exit=True
         self._clear()
         return True

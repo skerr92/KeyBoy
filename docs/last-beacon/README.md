@@ -2,6 +2,8 @@
 
 ![Wayfarer bridge and loadout selection](ship.png)
 
+![Expanded contract and loadout choices](expanded-loadout.png)
+
 ![Ashfall salvage operation](ashfall.png)
 
 ![Bracken hive purge](bracken.png)
@@ -42,12 +44,16 @@ In the field:
 | Carbine | 18 / 90 | Fast automatic fire, balanced damage |
 | Scattergun | 6 / 36 | Three pellets, strongest at close range |
 | Lancer | 6 / 30 | Heavy shots pierce two enemies |
+| Autocannon | 32 / 128 | Faster sustained fire; 2.5-second reload |
+| Breacher | 4 / 28 | Five-pellet wide cone; slower, powerful close-range volleys |
 
 | Support | Uses | Behavior |
 | --- | --- | --- |
 | Orbital | 3 | Marks a target ahead; 0.85-second warning, then area damage |
 | Sentry | 2 | A tripod provides automatic covering fire for 14 seconds |
 | Resupply | 2 | Restore three HP and three magazines' worth of reserve |
+| Shield | 2 | Six seconds of protection from enemy damage; HUD shows SH |
+| Stasis | 2 | Eight seconds at 35% enemy movement/attack-windup speed; HUD shows ST |
 
 ## Contracts and extraction
 
@@ -58,6 +64,9 @@ In the field:
 | Frost Array | Transmit at 2 uplinks | 120 s | $65 |
 | Cinder Wastes | Collect 4 signal cores | 100 s | $80 |
 | Last Transmission | Transmit at 3 uplinks | 150 s | $100 |
+| Hive Breaker | Destroy 4 hives | 150 s | $120 |
+| Green Recovery | Collect 4 signal cores | 125 s | $80 |
+| Polar Network | Transmit at 4 uplinks | 170 s | $115 |
 
 Salvage cores are collected by proximity. Hives take weapon or orbital damage.
 Uplinks need six seconds nearby; enemies close to the antenna contest the
@@ -87,6 +96,8 @@ pause and refit use small overlays. Art uses 16 colors and menu backings use
 1-bit bitmaps to fit alongside the launcher and I2S audio.
 
 `LB2` saves contain selected contract/loadout, credits, clear flags and refits.
+Validation now accepts eight contracts, five weapons, five support kits, and
+all eight completion bits; existing careers keep their indices and upgrades.
 Old four-field saves migrate on load: campaign position and gun upgrades are
 preserved, completed earlier drops become clear flags, and extra legacy
 support charges convert to $20 each. A new drop restores health. Saving writes
@@ -104,7 +115,9 @@ python3 tools/preview_last_beacon.py
 The host suite exercises contracts, loadouts, extraction success/failure,
 contested uplinks, projectile/cover collisions, reload and fallback behavior,
 support, invulnerability, rewards, upgrades, map reachability, save migration,
-menu input and retention of scene objects/bitmaps. The 25 checks pass. Host doubles do not model SPI refresh timing; connected-device
+menu input and retention of scene objects/bitmaps. The 30 checks pass, including the expanded loadouts, shield expiry, stasis
+movement/windup behavior, projectile-pool reservation, and all eight objective/
+extraction sequences. Host doubles do not model SPI refresh timing; connected-device
 results follow.
 
 ## Connected-device validation (2026-09-25)
@@ -128,3 +141,12 @@ restarted. All 25 Last Beacon tests, 15 Lantern Acre regression checks, host
 syntax checks and whitespace checks passed. Hands-on weapon balance and
 extraction playtesting, plus successful writable-mode saving, remain useful
 follow-up checks.
+
+## Expansion validation (2026-09-26)
+
+Eight contracts, five weapons, and five support kits pass 30 host checks.
+On the connected ESP32-S3, all eight scripted ship → drop → objective → shuttle
+→ extraction sequences passed with all five guns and support kits exercised.
+Shield/stasis timers and the expanded choices passed native checks. Collected
+heap stayed between 93,344 and 94,208 bytes free. The module is installed, the
+career save is byte-for-byte unchanged, and the launcher restarted.

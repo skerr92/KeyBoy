@@ -36,31 +36,40 @@ class PauseMenu:
         self._a = a_btn
         self._up = up_btn
         self._down = down_btn
+        self._cache = None
 
     def pressed(self):
         return self._sel.value == 0
 
     def open(self, title, score, score_path=None, save_callback=None):
-        panel_bitmap = displayio.Bitmap(196, 126, 1)
-        panel_palette = displayio.Palette(1)
-        panel_palette[0] = 0x18233E
-        panel = displayio.Group(x=22, y=55)
-        panel.append(displayio.TileGrid(panel_bitmap, pixel_shader=panel_palette))
-        panel.append(label.Label(terminalio.FONT, text=title, color=0xFFE5A3, x=14, y=18))
-        score_label = label.Label(terminalio.FONT, text="SCORE " + str(score), color=0xD8E9FF, x=14, y=36)
-        panel.append(score_label)
+        if self._cache is None:
+            panel_bitmap = displayio.Bitmap(196, 126, 1)
+            panel_palette = displayio.Palette(1)
+            panel_palette[0] = 0x18233E
+            panel = displayio.Group(x=22, y=55)
+            panel.append(displayio.TileGrid(panel_bitmap, pixel_shader=panel_palette))
+            title_label = label.Label(terminalio.FONT, text=title, color=0xFFE5A3, x=14, y=18)
+            panel.append(title_label)
+            score_label = label.Label(terminalio.FONT, text="SCORE " + str(score), color=0xD8E9FF, x=14, y=36)
+            panel.append(score_label)
+            options = ("Resume", "Save", "Leave game")
+            option_labels = []
+            for index, option in enumerate(options):
+                option_label = label.Label(terminalio.FONT, text=option, color=0xFFFFFF, x=32, y=57 + index * 20)
+                panel.append(option_label)
+                option_labels.append(option_label)
+            selector = label.Label(terminalio.FONT, text=">", color=0xFFE5A3, x=15, y=57)
+            panel.append(selector)
+            self._cache = (panel, title_label, score_label, selector)
+        panel, title_label, score_label, selector = self._cache
+        title_label.text = title
+        score_label.text = "SCORE " + str(score)
+        selector.y = 57
         options = ("Resume", "Save", "Leave game")
-        option_labels = []
-        for index, option in enumerate(options):
-            option_label = label.Label(terminalio.FONT, text=option, color=0xFFFFFF, x=32, y=57 + index * 20)
-            panel.append(option_label)
-            option_labels.append(option_label)
-        selector = label.Label(terminalio.FONT, text=">", color=0xFFE5A3, x=15, y=57)
-        panel.append(selector)
         self._splash.append(panel)
         choice = 0
         last_move = 0
-        a_was_down = False
+        a_was_down = not self._a.value
         # Finish the SEL press that opened the menu before accepting a new action.
         while self._sel.value == 0:
             time.sleep(0.03)
